@@ -4,6 +4,7 @@ import com.Johnny.wcx.features.api.core.WeConversationApi
 import com.Johnny.wcx.features.core.Feature
 import com.Johnny.wcx.features.core.SwitchFeature
 import com.Johnny.wcx.features.items.contacts.HideContacts
+import com.Johnny.wcx.features.items.contacts.hidecontacts.addons.HiddenContactContactRefresh
 
 /**
  * 隐藏联系人的各个「隐藏面」。
@@ -37,8 +38,8 @@ object HideConversationSurface : SwitchFeature() {
 )
 object HideContactListSurface : SwitchFeature() {
     override val defaultEnabled: Boolean = true
-    override fun onEnable() = HideContacts.onSurfaceChanged()
-    override fun onDisable() = HideContacts.onSurfaceChanged()
+    override fun onEnable() = HideContacts.onSurfaceChanged(refreshContacts = true)
+    override fun onDisable() = HideContacts.onSurfaceChanged(refreshContacts = true)
 }
 
 // ── 群成员 / @ 选择器 ───────────────────────────────────────────────────────
@@ -238,6 +239,7 @@ object TeamSummarySurface : SwitchFeature() {
  *
  * Hook 是按面动态判断的，所以不需要装卸 Hook —— 开关一变，下一次查询就生效。
  */
-internal fun HideContacts.onSurfaceChanged() {
+internal fun HideContacts.onSurfaceChanged(refreshContacts: Boolean = false) {
+    if (refreshContacts) HiddenContactContactRefresh.requestRefresh()
     runCatching { WeConversationApi.reloadConversations() }
 }

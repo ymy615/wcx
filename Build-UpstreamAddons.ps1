@@ -120,7 +120,7 @@ try {
     $registryPath = Join-Path $repo 'app/build/intermediates/built_in_kotlinc/standardDebug/compileStandardDebugKotlin/classes/com/Johnny/wcx/features/core/FeaturesProvider.class'
     $registry = (& (Join-Path $jdk21 'bin/javap.exe') -p -c $registryPath) | Out-String
     if ($LASTEXITCODE -ne 0) { throw 'Could not inspect compiled feature registry.' }
-    $addons = @('AutoRestoreOnLeave', 'AutoRestoreOnAppLeave', 'RedDotPrompt', 'BottomBarBold', 'SecretFriendShownPrompt', 'SecretFriendToastToggle', 'SecretFriendMenuTextConfig', 'LongPressAddFromChat', 'LongPressAddFromContacts')
+    $addons = @('HiddenContactContactRefresh', 'AutoRestoreOnLeave', 'AutoRestoreOnAppLeave', 'RedDotPrompt', 'BottomBarBold', 'SecretFriendShownPrompt', 'SecretFriendToastToggle', 'SecretFriendMenuTextConfig', 'LongPressAddFromChat', 'LongPressAddFromContacts')
     foreach ($feature in $addons) {
         if (-not $registry.Contains("contacts/hidecontacts/addons/$feature.INSTANCE")) { throw "Missing add-on: $feature" }
     }

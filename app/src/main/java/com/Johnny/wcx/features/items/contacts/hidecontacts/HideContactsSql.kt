@@ -26,13 +26,8 @@ private const val TAG = "HideContacts.Sql"
  * `NOT IN ('...')` predicates is safe everywhere here.
  */
 internal fun HideContacts.installSqlHooks() {
-    // wrapper 是所有列表查询的公共咽喉，只要有任意一个查询型面开着就得装。
-    if (surfaceOn(SURFACE_CONVERSATIONS) || surfaceOn(SURFACE_CONTACTS) ||
-        surfaceOn(SURFACE_MOMENTS_INLINE) || surfaceOn(SURFACE_NEW_FRIENDS) ||
-        surfaceOn(SURFACE_UNREAD)
-    ) {
-        installWrapperHook()
-    }
+    // Each rule checks its live surface switch; install even if every surface starts disabled.
+    installWrapperHook()
     if (surfaceOn(SURFACE_SEARCH)) installFtsHook()
 }
 

@@ -55,6 +55,8 @@ import com.Johnny.wcx.features.items.contacts.hidecontacts.installVoipHooks
 import com.Johnny.wcx.features.items.contacts.hidecontacts.rewriteMomentsFeedSql
 import com.Johnny.wcx.features.items.contacts.hidecontacts.showSchedulesDialog
 import com.Johnny.wcx.features.items.contacts.hidecontacts.uninstallSchedules
+import com.Johnny.wcx.features.items.contacts.hidecontacts.addons.HiddenContactContactRefresh
+import com.Johnny.wcx.features.items.contacts.hidecontacts.addons.HiddenContactConversationRecovery
 import com.Johnny.wcx.features.items.contacts.hidecontacts.addons.HiddenContactAddonState
 import com.Johnny.wcx.features.items.contacts.hidecontacts.addons.HiddenContactIndicators
 import com.Johnny.wcx.features.items.contacts.hidecontacts.addons.HiddenContactTitleGesture
@@ -142,6 +144,7 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
                 }
             }
             WeConversationApi.reloadConversations()
+            HiddenContactContactRefresh.requestRefresh()
             HiddenContactAddonState.refresh()
         }
 
@@ -242,6 +245,8 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
     }
 
     override fun onEnable() {
+        HiddenContactConversationRecovery.captureUpgradeCandidates()
+
         // --- home screen conversation list ---
 
         // Hide at query time: inject `username NOT IN (...)` into WeChat's list queries so hidden
@@ -364,6 +369,7 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
         // Register lifecycle recovery and attach to the current LauncherUI immediately too.
         registerScreenOffReceiver()
         HiddenContactAddonState.start()
+        HiddenContactContactRefresh.requestRefresh()
 
         WeConversationApi.reloadConversations()
     }
@@ -380,6 +386,7 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
         temporarilyShown = false
         WeConversationApi.reloadConversations()
         HiddenContactAddonState.stop()
+        HiddenContactContactRefresh.requestRefresh()
     }
 
     /**
@@ -441,6 +448,7 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
         cancelAutoRestore()
         if (temporarilyShown == shown) return
         temporarilyShown = shown
+        if (shown) HiddenContactConversationRecovery.requestRecovery()
         WeConversationApi.reloadConversations()
     }
 
@@ -474,7 +482,7 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
     }
 
     override fun onQuery(sql: String): String? {
-        if (isTemporarilyShown) return null
+        if (isTemporarilyShown || !surfaceOn(SURFACE_MOMENTS)) return null
         return rewriteMomentsFeedSql(sql, hiddenContacts)
     }
 
@@ -575,6 +583,7 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
         set(value) {
             if (field == value) return
             field = value
+            HiddenContactContactRefresh.requestRefresh()
             HiddenContactIndicators.stateChanged()
         }
 

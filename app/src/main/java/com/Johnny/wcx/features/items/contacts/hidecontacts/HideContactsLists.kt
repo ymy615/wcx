@@ -38,11 +38,10 @@ private const val TAG = "HideContacts.Lists"
  * retains would make "temporarily show" unable to bring the rows back until WeChat repopulates it.
  */
 internal fun HideContacts.installListHooks() {
-    // 按面安装：每个面独立开关，关掉的面连 Hook 都不装。
-    if (surfaceOn(SURFACE_CONTACTS)) {
-        installMvvmListHooks()
-        installContactCountHook()
-    }
+    // Keep contact hooks installed so switching the surface on/off works without a restart.
+    // Their callbacks check the live preference before filtering a new native snapshot.
+    installMvvmListHooks()
+    installContactCountHook()
     if (surfaceOn(SURFACE_GROUP_MEMBERS)) installGroupMemberHooks()
     if (surfaceOn(SURFACE_FAVORITES)) installFavoriteHooks()
     if (surfaceOn(SURFACE_FINDER_LIKE)) installFinderLikeHooks()
@@ -91,7 +90,7 @@ private fun HideContacts.hookMvvmListPreprocess(target: DexMethodDelegate, label
     }
 
     target.hookBefore {
-        if (isTemporarilyShown) return@hookBefore
+        if (isTemporarilyShown || !surfaceOn(SURFACE_CONTACTS)) return@hookBefore
 
         val contacts = args[0] as? List<*> ?: return@hookBefore
         // MvvmList hands us an empty snapshot on the initial load and whenever a filter matches
@@ -168,7 +167,7 @@ private fun HideContacts.installContactCountHook() {
     }
 
     methodNormalContactCount.hookAfter {
-        if (isTemporarilyShown) return@hookAfter
+        if (isTemporarilyShown || !surfaceOn(SURFACE_CONTACTS)) return@hookAfter
         val total = result as? Int ?: return@hookAfter
 
         val hidden = hiddenContacts

@@ -146,6 +146,29 @@ object WeConversationApi : ApiFeature(), IResolveDex {
         }
     }
 
+    internal fun getConversationForRecovery(talker: String): Any? {
+        check(!methodGetConversationByTalker.isPlaceholder) { "Conversation getter unavailable" }
+        return methodGetConversationByTalker.method.invoke(conversationStorage, talker)
+    }
+
+    internal fun newConversationForRecovery(talker: String): Any {
+        check(!methodGetConversationByTalker.isPlaceholder) { "Conversation model unavailable" }
+        return methodGetConversationByTalker.method.returnType
+            .getConstructor(String::class.java).newInstance(talker)
+    }
+
+    internal fun insertConversationForRecovery(conversation: Any): Boolean {
+        val candidates = conversationStorage.javaClass.methods.filter {
+            it.parameterTypes.contentEquals(arrayOf(conversation.javaClass)) &&
+                it.returnType == Long::class.javaPrimitiveType && !Modifier.isStatic(it.modifiers)
+        }
+        // The insertion API is overridable; the otherwise identical flag calculator is final.
+        // Reuse the already-resolved storage/model types without invalidating the shared DEX cache.
+        val insert = candidates.filterNot { Modifier.isFinal(it.modifiers) }.singleOrNull()
+            ?: error("Native conversation insertion is ambiguous or unavailable")
+        return (insert.invoke(conversationStorage, conversation) as Number).toLong() >= 0
+    }
+
     /** Read true unread state without passing through hidden conversation-list SQL filters. */
     fun getUnreadCountForIndicator(talker: String): Long {
         check(!methodGetConversationByTalker.isPlaceholder) { "Conversation getter unavailable" }
