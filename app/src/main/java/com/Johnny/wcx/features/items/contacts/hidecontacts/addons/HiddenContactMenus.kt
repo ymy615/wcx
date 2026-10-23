@@ -16,8 +16,7 @@ import java.lang.reflect.Modifier
 import java.lang.reflect.Proxy
 
 /**
- * 添加密友组 28 / 29：会话列表长按添加、通讯录长按添加。
- * 菜单文字共用 [HiddenContactAddonState.addMenuText]。
+ * 在微信原生会话/通讯录菜单中增删上游隐藏名单，两处文字可分别设置。
  */
 private const val TAG_ADD = "SecretFriend.Add"
 
@@ -66,11 +65,11 @@ object LongPressAddFromChat : SwitchFeature(), WeConversationContextMenuApi.IMen
 
 /**
  * 密友名单增删（两个添加开关共用）：已在名单内则移除，否则加入。
- * 显式用户操作，直接 Toast（需要操作反馈，不受「操作提示」总开关影响）。
+ * 提示内容和是否显示统一由「操作提示」控制。
  */
 internal fun toggleSecret(activity: Activity, wxId: String) {
     if (wxId.isEmpty()) return
-    // 增删名单走「存储名单」：主控开关关闭时也应能维护名单（下次开启直接生效）
+    // 修改上游持久名单，不依赖联系人当前是否临时显示。
     if (HiddenContactAddonState.isStoredSecret(wxId)) {
         HiddenContactAddonState.setWxIds(HiddenContactAddonState.getStoredWxIds() - wxId)
         HiddenContactAddonState.showToast(activity, HiddenContactAddonState.toastRemoved)

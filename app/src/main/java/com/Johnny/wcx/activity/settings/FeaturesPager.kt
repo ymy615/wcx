@@ -217,10 +217,9 @@ fun CategoryDetailScreen(
         masterEnabled = next
         Preferences.hiddenContactsMasterEnabled = next
         items.filterIsInstance<SwitchFeature>().forEach { feature ->
-            feature.isEnabled = next && WePrefs.getBoolOrFalse(feature.name)
-        }
-        switchStates.keys.forEach { key ->
-            switchStates[key] = next && WePrefs.getBoolOrFalse(key)
+            val enabled = next && feature.configuredEnabled
+            feature.isEnabled = enabled
+            switchStates[feature.name] = enabled
         }
     }
 

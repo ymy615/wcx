@@ -16,6 +16,10 @@ abstract class SwitchFeature : BaseFeature() {
     /** Default state when the user has never toggled this feature. */
     protected open val defaultEnabled: Boolean = false
 
+    /** Preserve defaults as well as explicit choices when a category is re-enabled. */
+    val configuredEnabled: Boolean
+        get() = WePrefs.getBoolOrDef(name, defaultEnabled)
+
     /** Whether this feature should load in the current process. Defaults to the main process only. */
     protected open val shouldLoadInCurrentProcess: Boolean
         get() = TargetProcesses.isInMain
@@ -28,7 +32,7 @@ abstract class SwitchFeature : BaseFeature() {
         if (!shouldLoadInCurrentProcess) return
         // 「密友功能」分类有总开关：关掉总开关时整个分类都不加载（各功能自身开关状态保留）。
         if (CATEGORY_WITH_MASTER_SWITCH in categories && !Preferences.hiddenContactsMasterEnabled) return
-        _isEnabled = WePrefs.getBoolOrDef(name, defaultEnabled)
+        _isEnabled = configuredEnabled
         if (shouldEnableOnStartup) enable()
     }
 

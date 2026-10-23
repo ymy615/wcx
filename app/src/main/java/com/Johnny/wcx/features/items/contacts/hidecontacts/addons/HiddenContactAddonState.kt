@@ -71,7 +71,9 @@ object HiddenContactAddonState : WeDatabaseListenerApi.IInsertListener {
         HiddenContactTitleGesture.watch(activity)
     }
 
-    fun tracksUnread() = isAvailable() && (RedDotPrompt.isActive || BottomBarBold.isActive)
+    // Feature initialization order must not mark messages read before the indicator object starts.
+    fun tracksUnread() = isAvailable() &&
+        (WePrefs.getBoolOrDef("圆点提示", true) || WePrefs.getBoolOrDef("底栏字体加粗", false))
 
     override fun onInsert(table: String, values: ContentValues) {
         if (!tracksUnread() || !table.equals("message", ignoreCase = true)) return
