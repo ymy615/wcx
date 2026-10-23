@@ -49,6 +49,10 @@ android {
         versionCode = 336
         versionName = "v336"
 
+        // Local add-on builds keep upstream's release numbers as defaults.
+        providers.gradleProperty("wcxlcVersionCode").orNull?.let { versionCode = it.toInt() }
+        providers.gradleProperty("wcxlcVersionName").orNull?.let { versionName = it }
+
         buildConfigField("String", "COMMIT_HASH", "\"${gitHash}\"")
         buildConfigField("String", "TAG", "\"WCX\"")
         buildConfigField("long", "BUILD_TIMESTAMP", "${System.currentTimeMillis()}L")

@@ -41,6 +41,7 @@ object WeConversationContextMenuApi : ApiFeature(), IResolveDex {
         val id: Int,
         val text: String, val drawable: Drawable,
         val shouldShow: (context: ConversationContext, itemId: Int) -> Boolean,
+        val textForContext: ((ConversationContext) -> String)? = null,
         val onClick: (context: ConversationContext) -> Unit
     )
 
@@ -95,7 +96,7 @@ object WeConversationContextMenuApi : ApiFeature(), IResolveDex {
         for (item in menuItems.values.flatten()) {
             try {
                 if (!item.shouldShow(context, item.id)) continue
-                menu.add(groupId, item.id, 0, item.text).icon = item.drawable
+                menu.add(groupId, item.id, 0, item.textForContext?.invoke(context) ?: item.text).icon = item.drawable
             } catch (e: Throwable) {
                 WeLogger.e(TAG, "shouldShow/add callback failed", e)
             }

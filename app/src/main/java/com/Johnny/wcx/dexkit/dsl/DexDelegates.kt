@@ -273,7 +273,7 @@ class DexMethodDelegate internal constructor(
 
     val method: Method
         get() {
-            if (descriptor != null && descriptor!!.name == "Lcom/tencent/mm/ui/LauncherUI;->()Lcom/tencent/mm/ui/LauncherUI;")
+            if (isPlaceholder)
                 error("Method resolution has failed: $key")
             if (cachedMethod == null && descriptor != null)
                 cachedMethod = descriptor!!.getMethodInstance(ClassLoaders.HOST)
@@ -293,15 +293,19 @@ class DexMethodDelegate internal constructor(
     inline fun setDescriptor(m: MethodData) = setDescriptor(DexMethodDescriptor(m.className, m.methodName, m.methodSign))
 
     val isPlaceholder
-        get() = descriptor != null &&
-                descriptor!!.name == "Lcom/tencent/mm/ui/LauncherUI;->getInstance()Lcom/tencent/mm/ui/LauncherUI;"
+        get() = descriptor?.descriptor == PLACEHOLDER_DESCRIPTOR
 
     fun setDescriptor(className: String, methodName: String, methodSign: String) =
         setDescriptor(DexMethodDescriptor(className, methodName, methodSign))
 
     fun setPlaceholderDescriptor(placeholder: Boolean = true, reason: String? = null) {
         WeLogger.w("DexMethodDelegate", "setting placeholder for $key")
-        setDescriptor(DexMethodDescriptor("Lcom/tencent/mm/ui/LauncherUI;->getInstance()Lcom/tencent/mm/ui/LauncherUI;"))
+        setDescriptor(DexMethodDescriptor(PLACEHOLDER_DESCRIPTOR))
+    }
+
+    private companion object {
+        const val PLACEHOLDER_DESCRIPTOR =
+            "Lcom/tencent/mm/ui/LauncherUI;->getInstance()Lcom/tencent/mm/ui/LauncherUI;"
     }
 
     override fun getDescriptorString(): String? = descriptor?.descriptor

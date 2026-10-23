@@ -1,16 +1,33 @@
 package com.Johnny.wcx.features.items.moments
 
 import com.Johnny.wcx.features.api.core.WeDatabaseListenerApi
+import com.Johnny.wcx.dexkit.abc.IResolveDex
+import com.Johnny.wcx.dexkit.dsl.dexMethod
 import com.Johnny.wcx.features.core.Feature
 import com.Johnny.wcx.features.core.SwitchFeature
 import com.Johnny.wcx.utils.WeLogger
 
-@Feature(name = "朋友圈查询增强", categories = ["朋友圈"], description = "显示历史撤回以及缓存过的朋友圈内容")
-object EnhanceQuery : SwitchFeature(), WeDatabaseListenerApi.IQueryListener {
+@Feature(name = "朋友圈查询增强", categories = ["朋友圈"], description = "显示本地仍有缓存的朋友圈；开启时使用微信原生个人相册，重新进入相册生效")
+object EnhanceQuery : SwitchFeature(), WeDatabaseListenerApi.IQueryListener, IResolveDex {
 
     private const val TAG = "EnhanceQuery"
 
+    // 8.0.79 routes profile thumbnails and the album to different data sources.
+    // The native album still reads SnsInfo through the query listener below.
+    // Resolve the album switch only: timeline/detail/publish have separate switches.
+    private val methodUseFlutterAlbum by dexMethod(allowFailure = true) {
+        matcher {
+            usingEqStrings("enableFlutterSNSPage", "com.tencent.mm.plugin.sns.router.SnsRouter")
+            paramCount = 0
+            returnType = "boolean"
+        }
+    }
+
     override fun onEnable() {
+        if (!methodUseFlutterAlbum.isPlaceholder) {
+            methodUseFlutterAlbum.hookBefore { result = false }
+            WeLogger.i(TAG, "native album compatibility enabled")
+        }
         WeDatabaseListenerApi.addListener(this)
     }
 
@@ -30,7 +47,11 @@ object EnhanceQuery : SwitchFeature(), WeDatabaseListenerApi.IQueryListener {
     }
 
     private fun rewriteSql(sql: String): String {
-        if (!sql.contains("select *,rowid from SnsInfo", false)) return sql
+        // Count and row queries must agree or a cached row can exist while the
+        // native album still considers the page empty. Keep unrelated SQL intact.
+        if (!sql.startsWith("select *,rowid from SnsInfo", true) &&
+            !sql.startsWith("select count(*) from SnsInfo", true)
+        ) return sql
 
         var newSql = sql
 
@@ -38,6 +59,9 @@ object EnhanceQuery : SwitchFeature(), WeDatabaseListenerApi.IQueryListener {
             newSql = sql
                 .replace(SOURCE_TYPE_FILTER, SOURCE_TYPE_FILTER_ENHANCED)
                 .replace("(snsId >= ", "(1=1 or snsId >= ")
+                // WeChat can use stringSeq instead of numeric snsId for the
+                // same oldest-visible boundary. Preserve < / <= pagination.
+                .replace("(stringSeq >=", "(1=1 or stringSeq >=")
         }
 
         return newSql.replace("(sourceType & 2 != 0 )", "(1=1)")

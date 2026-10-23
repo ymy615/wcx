@@ -1,5 +1,7 @@
 package com.Johnny.wcx.features.api.core
 
+import android.content.ContentValues
+
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.reflekt.utils.createInstance
 import com.Johnny.wcx.dexkit.abc.IResolveDex
@@ -142,6 +144,18 @@ object WeConversationApi : ApiFeature(), IResolveDex {
             paramCount = 1
             paramTypes(String::class.java)
         }
+    }
+
+    /** Read true unread state without passing through hidden conversation-list SQL filters. */
+    fun getUnreadCountForIndicator(talker: String): Long {
+        check(!methodGetConversationByTalker.isPlaceholder) { "Conversation getter unavailable" }
+        val conversation = methodGetConversationByTalker.method.invoke(conversationStorage, talker) ?: return 0L
+        val values = conversation.javaClass.getMethod("convertTo").invoke(conversation) as ContentValues
+        fun count(column: String): Long? {
+            val key = values.keySet().firstOrNull { it.equals(column, ignoreCase = true) } ?: return null
+            return values.getAsLong(key)
+        }
+        return maxOf(0L, count("unReadCount") ?: error("Unread count unavailable"), count("unReadMuteCount") ?: 0L)
     }
 
     // com.tencent.mm.ui.conversation.s1#d(context, talker, m3, PBool, ProgressDialog, boolean) =

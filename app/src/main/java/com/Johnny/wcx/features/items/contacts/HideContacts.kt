@@ -11,7 +11,6 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
-import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -56,6 +55,9 @@ import com.Johnny.wcx.features.items.contacts.hidecontacts.installVoipHooks
 import com.Johnny.wcx.features.items.contacts.hidecontacts.rewriteMomentsFeedSql
 import com.Johnny.wcx.features.items.contacts.hidecontacts.showSchedulesDialog
 import com.Johnny.wcx.features.items.contacts.hidecontacts.uninstallSchedules
+import com.Johnny.wcx.features.items.contacts.hidecontacts.addons.HiddenContactAddonState
+import com.Johnny.wcx.features.items.contacts.hidecontacts.addons.HiddenContactIndicators
+import com.Johnny.wcx.features.items.contacts.hidecontacts.addons.HiddenContactTitleGesture
 import com.Johnny.wcx.preferences.WePrefs
 import com.Johnny.wcx.preferences.WePrefs.Companion.prefOption
 import com.Johnny.wcx.ui.content.AlertDialogContent
@@ -70,7 +72,6 @@ import com.Johnny.wcx.utils.HostInfo
 import com.Johnny.wcx.utils.WeLogger
 import com.Johnny.wcx.utils.android.getSystemService
 import com.Johnny.wcx.utils.android.showToast
-import com.Johnny.wcx.utils.now
 import android.util.Base64
 import com.Johnny.wcx.constants.Preferences
 import org.json.JSONArray
@@ -78,8 +79,6 @@ import org.luckypray.dexkit.query.enums.MatchType
 import org.luckypray.dexkit.query.matchers.MethodMatcher
 import java.lang.ref.WeakReference
 import kotlin.math.sqrt
-import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.Instant
 import java.lang.reflect.Modifier as JavaModifier
 
 
@@ -143,6 +142,7 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
                 }
             }
             WeConversationApi.reloadConversations()
+            HiddenContactAddonState.refresh()
         }
 
     private object ScreenOffReceiver : BroadcastReceiver() {
@@ -269,21 +269,7 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
 
             registerScreenOffReceiver()
 
-            // Triple-click on the main-screen title to toggle temporary show/hide.
-            val titleView = context.window?.decorView
-                ?.findViewById<TextView>(android.R.id.text1) ?: return@hookAfter
-            var clickCount = 0
-            var lastClickTime = Instant.DISTANT_PAST
-            titleView.setOnClickListener {
-                if (!tripleClickTitle) return@setOnClickListener
-                val now = now()
-                if (now - lastClickTime > TRIPLE_TAP_WINDOW) clickCount = 1 else clickCount++
-                lastClickTime = now
-                if (clickCount >= 3) {
-                    clickCount = 0
-                    toggleTemporarilyShown(context)
-                }
-            }
+            HiddenContactAddonState.watch(context)
         }
 
         // --- shake to leave ---
@@ -374,6 +360,11 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
 
         installSchedules()
 
+        // Enabling from an already-open settings page misses MainTabUI.doOnCreate.
+        // Register lifecycle recovery and attach to the current LauncherUI immediately too.
+        registerScreenOffReceiver()
+        HiddenContactAddonState.start()
+
         WeConversationApi.reloadConversations()
     }
 
@@ -385,10 +376,10 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
         chattingUi = null
         WeChatInputBarApi.removeListener(this)
         WeDatabaseListenerApi.removeListener(this)
-        autoRestoreHandler.removeCallbacksAndMessages(null)
-        autoRestorePosted = false
+        cancelAutoRestore()
         temporarilyShown = false
         WeConversationApi.reloadConversations()
+        HiddenContactAddonState.stop()
     }
 
     /**
@@ -401,33 +392,38 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
      * 与 `#show` / `#hide` / 三击标题共用 [temporarilyShown]，重复触发会重置计时。
      */
     internal fun temporarilyShowFor(context: Context, minutes: Int) {
-        temporarilyShown = true
-        WeConversationApi.reloadConversations()
+        setTemporarilyShown(true)
 
         val app = context.applicationContext
         val delayMs = minutes.coerceIn(1, 1440) * 60_000L
-        if (autoRestorePosted) autoRestoreHandler.removeCallbacksAndMessages(null)
         autoRestorePosted = true
         autoRestoreHandler.postDelayed({
             autoRestorePosted = false
-            if (!temporarilyShown) return@postDelayed
-            temporarilyShown = false
-            WeConversationApi.reloadConversations()
-            runCatching { showToast(app, "临时显示已到期，已恢复隐藏") }
+            restoreTemporaryVisibility(app)
         }, delayMs)
 
-        showToast(app, "已临时显示 $minutes 分钟，输入 #hide 可提前恢复隐藏")
+        HiddenContactAddonState.showToast(app, HiddenContactAddonState.toastTempShown)
     }
 
     internal fun toggleTemporarilyShown(context: Context) {
         if (temporarilyShown) {
-            temporarilyShown = false
-            showToast(context, ("已恢复隐藏联系人"))
+            restoreTemporaryVisibility(context)
         } else {
-            temporarilyShown = true
-            showToast(context, ("已临时显示所有隐藏的联系人"))
+            setTemporarilyShown(true)
+            HiddenContactAddonState.showToast(context, HiddenContactAddonState.toastTempShown)
         }
-        WeConversationApi.reloadConversations()
+    }
+
+    /** All automatic restore paths are idempotent and use the same feedback text. */
+    internal fun restoreTemporaryVisibility(context: Context? = null) {
+        if (!temporarilyShown) return
+        setTemporarilyShown(false)
+        HiddenContactAddonState.showToast(context, HiddenContactAddonState.toastTempOff)
+    }
+
+    private fun cancelAutoRestore() {
+        autoRestoreHandler.removeCallbacksAndMessages(null)
+        autoRestorePosted = false
     }
 
     /**
@@ -442,6 +438,7 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
      * scheduled fire time.
      */
     internal fun setTemporarilyShown(shown: Boolean) {
+        cancelAutoRestore()
         if (temporarilyShown == shown) return
         temporarilyShown = shown
         WeConversationApi.reloadConversations()
@@ -458,12 +455,8 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
                     )
                     return
                 }
-                temporarilyShown = true
-                showToast(
-                    chatFooter.context,
-                    ("已临时显示所有隐藏的联系人，输入 #hide 恢复隐藏"),
-                )
-                WeConversationApi.reloadConversations()
+                setTemporarilyShown(true)
+                HiddenContactAddonState.showToast(chatFooter.context, HiddenContactAddonState.toastTempShown)
             }
 
             "#hide" -> {
@@ -475,12 +468,7 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
                     )
                     return
                 }
-                temporarilyShown = false
-                showToast(
-                    chatFooter.context,
-                    ("已恢复隐藏联系人"),
-                )
-                WeConversationApi.reloadConversations()
+                restoreTemporaryVisibility(chatFooter.context)
             }
         }
     }
@@ -583,7 +571,12 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
         }
     }
 
-    private var temporarilyShown = false
+    @Volatile private var temporarilyShown = false
+        set(value) {
+            if (field == value) return
+            field = value
+            HiddenContactIndicators.stateChanged()
+        }
 
     // 搜索框指令的到期自动恢复计时（主进程主线程）。
     private val autoRestoreHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -607,11 +600,6 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
 
     /** 搜索框指令触发的临时显示时长（分钟，到期自动恢复隐藏）。 */
     internal var searchCommandMinutes by prefOption("hide_search_command_minutes", 30)
-
-    // Three taps within this window on the main-screen title register as a triple-click.
-    // Matches WeChat's own double-tap detection threshold (f8/r8 tab listener, 300 ms),
-    // with a slightly wider window so the gesture stays comfortable.
-    private val TRIPLE_TAP_WINDOW = 500L.milliseconds
 
     // Hooks the ConversationStorage notify dispatcher to cancel per-row update events (type 3)
     // for hidden contacts before they reach list adapters. WeChat fires b(3, storage, talker)
@@ -659,11 +647,15 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
                 return@hookBefore
             }
 
-            markingAsRead.set(true)
-            try {
-                WeConversationApi.markAsRead(talker)
-            } finally {
-                markingAsRead.set(false)
+            // Unread indicators need actual native unread state until the matching chat opens.
+            // Cancelling the row notification already keeps it out of the visible list.
+            if (!HiddenContactAddonState.tracksUnread()) {
+                markingAsRead.set(true)
+                try {
+                    WeConversationApi.markAsRead(talker)
+                } finally {
+                    markingAsRead.set(false)
+                }
             }
             result = null
         }
@@ -779,7 +771,17 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
                             onCheckedChange = {
                                 tripleClickTitleInput = it
                                 tripleClickTitle = it
+                                HiddenContactTitleGesture.refresh()
                             },
+                        )
+                        TextFieldDialogWidget(
+                            title = "三击计次间隔(毫秒)",
+                            value = HiddenContactTitleGesture.clickWindowMs.toString(),
+                            onValueChange = { raw -> raw.toIntOrNull()?.let {
+                                HiddenContactTitleGesture.clickWindowMs = it.coerceIn(200, 5000)
+                            } },
+                            dialogTitle = "相邻点击最大间隔（200–5000 毫秒）",
+                            confirmLabel = "确定", dismissLabel = "取消",
                         )
                         TextFieldDialogWidget(
                             title = "搜索框临时显示指令",
