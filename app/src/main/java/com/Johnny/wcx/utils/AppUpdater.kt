@@ -60,10 +60,10 @@ sealed interface UpdateResult {
 // ─── GitHub Release API ────────────────────────────────────────────────────
 
 private const val GITHUB_API_LATEST =
-    "https://api.github.com/repos/Johnny520/wcx/releases/latest"
+    "https://api.github.com/repos/ymy615/wcx/releases/latest"
 private const val GITHUB_API_RELEASES =
-    "https://api.github.com/repos/Johnny520/wcx/releases?per_page=20"
-private const val RELEASES_PAGE = "https://github.com/Johnny520/wcx/releases"
+    "https://api.github.com/repos/ymy615/wcx/releases?per_page=20"
+private const val RELEASES_PAGE = "https://github.com/ymy615/wcx/releases"
 
 // APKs are published per entry-point flavor: app-<flavor>-<abi>-release.apk.
 // Stay on the same flavor the installed build was compiled for.
@@ -77,6 +77,17 @@ private const val UNIVERSAL_APK_SUFFIX = "universal-release.apk"
 private fun selectApkUrl(assets: List<GitHubAsset>): String {
     val supportedAbis = Build.SUPPORTED_ABIS
     for (abi in supportedAbis) {
+        if (FLAVOR == "standard") {
+            val localAbi = if (abi == "arm64-v8a") "arm64" else abi
+            for (buildType in listOf("release", "debug")) {
+                assets.firstOrNull {
+                    it.name.startsWith("wcx-") &&
+                        (it.name.contains("-upstream-addons-") || it.name.contains("-wcxlc-local-")) &&
+                        (it.name.endsWith("-$localAbi-$buildType.apk") ||
+                            it.name.endsWith("-$abi-$buildType.apk"))
+                }?.let { return it.browser_download_url }
+            }
+        }
         val expected = "app-$FLAVOR-$abi-release.apk"
         assets.firstOrNull { it.name == expected }?.let { return it.browser_download_url }
     }
@@ -236,6 +247,8 @@ object AppUpdater {
     }
 
     private fun extractVersionCode(tagName: String): Int {
+        Regex("""(?:addons|secretfix)-v\d+-(\d+)""").matchEntire(tagName)
+            ?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
         val vPrefix = tagName.removePrefix("v")
         vPrefix.toIntOrNull()?.let { return it }
         val ciMatch = Regex("""CI-?(\d+)?""", RegexOption.IGNORE_CASE).find(tagName)

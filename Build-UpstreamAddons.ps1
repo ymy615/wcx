@@ -4,6 +4,7 @@ param(
     [switch]$CheckOnly,
     [switch]$BuildOnly,
     [switch]$SkipBuild,
+    [ValidateSet('Release', 'Debug')][string]$BuildType = 'Release',
     [string]$ForkUrl = 'https://github.com/ymy615/wcx.git',
     [string]$ForkBranch = 'master',
     [string]$ToolRoot = 'D:\projects\VX\local-analysis\tools',
@@ -15,6 +16,8 @@ $PSNativeCommandUseErrorActionPreference = $false
 $repo = $PSScriptRoot
 $requiredBranch = 'codex/v336-secret-addons'
 $remoteRef = "refs/remotes/ymy615/$ForkBranch"
+$variant = "standard$BuildType"
+$buildSlug = $BuildType.ToLowerInvariant()
 
 function Invoke-LocalGit {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$GitArgs)
@@ -99,8 +102,8 @@ try {
     $env:WEKIT_KEY_PASSWORD = $env:WEKIT_KEYSTORE_PASSWORD
     $gradleArgs = @('--gradle-user-home', (Join-Path $ToolRoot 'gradle-home'),
         "-Porg.gradle.java.installations.paths=$jdk17,$jdk21", "-PwcxlcVersionCode=$versionCode",
-        "-PwcxlcVersionName=$versionName", '--console=plain', ':app:assembleStandardDebug')
-    Write-Host "Building $versionName ($versionCode). Build log: $buildLog"
+        "-PwcxlcVersionName=$versionName", '--console=plain', '--max-workers=2', ":app:assembleStandard$BuildType")
+    Write-Host "Building $versionName ($versionCode), $BuildType. Build log: $buildLog"
     Push-Location -LiteralPath $repo
     try {
         & (Join-Path $repo 'gradlew.bat') @gradleArgs *> $buildLog
@@ -110,14 +113,14 @@ try {
         Get-Content -LiteralPath $buildLog -Tail 35
         throw "Build failed; see $buildLog"
     }
-    $apkDirectory = Join-Path $repo 'app/build/outputs/apk/standard/debug'
+    $apkDirectory = Join-Path $repo "app/build/outputs/apk/standard/$buildSlug"
     $metadata = Get-Content -LiteralPath (Join-Path $apkDirectory 'output-metadata.json') -Raw | ConvertFrom-Json
     $entry = @($metadata.elements | Where-Object { @($_.filters | Where-Object { $_.filterType -eq 'ABI' -and $_.value -eq 'arm64-v8a' }).Count -gt 0 })
     if ($entry.Count -ne 1 -or $entry[0].versionCode -ne $versionCode -or $entry[0].versionName -ne $versionName) {
         throw 'APK metadata does not match this build; refusing to export an older APK.'
     }
     # Inspect the compiled registry consumed by D8, including both upstream and add-ons.
-    $registryPath = Join-Path $repo 'app/build/intermediates/built_in_kotlinc/standardDebug/compileStandardDebugKotlin/classes/com/Johnny/wcx/features/core/FeaturesProvider.class'
+    $registryPath = Join-Path $repo "app/build/intermediates/built_in_kotlinc/$variant/compile${variant}Kotlin/classes/com/Johnny/wcx/features/core/FeaturesProvider.class"
     $registry = (& (Join-Path $jdk21 'bin/javap.exe') -p -c $registryPath) | Out-String
     if ($LASTEXITCODE -ne 0) { throw 'Could not inspect compiled feature registry.' }
     $addons = @('HiddenContactContactRefresh', 'AutoRestoreOnLeave', 'AutoRestoreOnAppLeave', 'RedDotPrompt', 'BottomBarBold', 'SecretFriendShownPrompt', 'SecretFriendToastToggle', 'SecretFriendMenuTextConfig', 'LongPressAddFromChat', 'LongPressAddFromContacts')
@@ -132,11 +135,19 @@ try {
     $apk = Join-Path $apkDirectory $entry[0].outputFile
     & (Join-Path $sdk 'build-tools/36.0.0/apksigner.bat') verify $apk
     if ($LASTEXITCODE -ne 0) { throw 'APK signature verification failed.' }
-    $exported = Join-Path $OutputDirectory "wcx-${versionName}-${versionCode}-arm64-debug.apk"
+    $exported = Join-Path $OutputDirectory "wcx-${versionName}-${versionCode}-arm64-$buildSlug.apk"
     Copy-Item -LiteralPath $apk -Destination $exported
     $digest = (Get-FileHash -LiteralPath $exported -Algorithm SHA256).Hash.ToLowerInvariant()
     [IO.File]::WriteAllText($exported + '.sha256', "$digest  $([IO.Path]::GetFileName($exported))`n")
     [IO.File]::WriteAllText($counterFile, [string]$versionCode)
+    $evidenceDirectory = Join-Path $OutputDirectory "build-evidence-$versionCode"
+    New-Item -ItemType Directory -Path $evidenceDirectory -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $evidenceDirectory 'feature-registry.txt'), $registry)
+    $mappingDirectory = Join-Path $repo "app/build/outputs/mapping/$variant"
+    foreach ($name in @('mapping.txt', 'configuration.txt', 'seeds.txt', 'usage.txt')) {
+        $mappingFile = Join-Path $mappingDirectory $name
+        if (Test-Path -LiteralPath $mappingFile) { Copy-Item -LiteralPath $mappingFile -Destination $evidenceDirectory }
+    }
     Write-Host "APK ready: $exported"
     Write-Host 'Verify title gestures, both restore switches, and unread indicators on the phone before replacing your daily build.'
 } finally {
