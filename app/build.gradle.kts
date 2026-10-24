@@ -46,8 +46,8 @@ android {
         targetSdk = libs.versions.targetSdk.get().toInt()
         // 版本号单一数据源：CI（.github/workflows/ci.yml）直接读取此处，
         // 发版时只需在此递增 versionCode / versionName
-        versionCode = 336
-        versionName = "v336"
+        versionCode = 342
+        versionName = "v342"
 
         // Local add-on builds keep upstream's release numbers as defaults.
         providers.gradleProperty("wcxlcVersionCode").orNull?.let { versionCode = it.toInt() }

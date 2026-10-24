@@ -121,8 +121,30 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
     const val SURFACE_VIBRATE = "密友消息震动"
     const val SURFACE_TEAM_SUMMARY = "微信团队汇总提醒"
 
-    /** 某个隐藏面是否开启（默认开启，升级上来的用户行为不变）。 */
-    internal fun surfaceOn(surface: String): Boolean = WePrefs.getBoolOrDef(surface, true)
+    /**
+     * 某个隐藏面是否开启。
+     *
+     * 两个条件都要满足才生效：
+     * 1. 「密友功能总开关」开着 —— 总开关是唯一的总闸，关掉时所有面一律无效；
+     * 2. 该面自己的开关开着。
+     *
+     * 默认值必须和 `HiddenContactSurfaces.kt` 里对应 Feature 的 `defaultEnabled` 一致，
+     * 否则会出现「诊断页显示开启、实际没生效」这种对不上的情况（禁止进入聊天/禁止查看资料
+     * 等按需项默认是关的）。
+     */
+    internal fun surfaceOn(surface: String): Boolean {
+        if (!Preferences.hiddenContactsMasterEnabled) return false
+        val default = when (surface) {
+            SURFACE_BLOCK_CHAT,
+            SURFACE_BLOCK_PROFILE,
+            SURFACE_AUTO_REJECT_VOIP,
+            SURFACE_VIBRATE,
+            SURFACE_TEAM_SUMMARY,
+            -> false
+            else -> true
+        }
+        return WePrefs.getBoolOrDef(surface, default)
+    }
 
     // One-time flag: older versions hid chats by writing parentRef='hidden_conv_parent'. Once we've
     // cleared that stale marker for the current hidden set (so #show / un-hide work again), we never
