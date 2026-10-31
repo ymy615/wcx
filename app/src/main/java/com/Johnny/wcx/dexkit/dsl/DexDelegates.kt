@@ -338,7 +338,7 @@ class DexMethodDelegate internal constructor(
      * `descriptor == null` 必须算进来：解析未完成时调用方守卫会被 `false` 放行，
      * 随后 `.method` 抛 `Method not found for key: ...`（实测 8.0.76 反复抛出 15+ 次）。
      */
-    val isPlaceholder
+    val isPlaceholder: Boolean
         get() {
             val resolved = descriptor?.descriptor
             return resolved == null || resolved == PLACEHOLDER_DESCRIPTOR
