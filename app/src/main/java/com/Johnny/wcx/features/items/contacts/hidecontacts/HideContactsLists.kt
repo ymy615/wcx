@@ -6,7 +6,9 @@ import com.Johnny.wcx.constants.PackageNames
 import com.Johnny.wcx.dexkit.dsl.DexMethodDelegate
 import com.Johnny.wcx.features.api.core.WeDatabaseApi
 import com.Johnny.wcx.features.items.contacts.HideContacts
+import com.Johnny.wcx.utils.HostInfo
 import com.Johnny.wcx.utils.WeLogger
+import java.lang.reflect.Modifier
 import java.util.LinkedList
 
 private const val TAG = "HideContacts.Lists"
@@ -41,10 +43,115 @@ internal fun HideContacts.installListHooks() {
     // Keep contact hooks installed so switching the surface on/off works without a restart.
     // Their callbacks check the live preference before filtering a new native snapshot.
     installMvvmListHooks()
+    installShareSelectorHook()
     installContactCountHook()
     if (surfaceOn(SURFACE_GROUP_MEMBERS)) installGroupMemberHooks()
     if (surfaceOn(SURFACE_FAVORITES)) installFavoriteHooks()
     if (surfaceOn(SURFACE_FINDER_LIKE)) installFinderLikeHooks()
+}
+
+/**
+ * Recent conversations in the MVVM share picker are built through a separate data source, not the
+ * homepage SQL. Filter a copy before its native preprocessor sorts, builds sections and clones rows,
+ * so the adapter's item count and click positions remain aligned. Keep the original snapshot for
+ * temporary show and later refreshes; do not alter conversation storage or the recent-chat history.
+ */
+private fun HideContacts.installShareSelectorHook() {
+    // These exact host builds have been checked against their raw DEX: the selector preprocesses
+    // the list before cloning it, and its click listener reads row.f as the actual username.
+    // Keep unsupported versions untouched instead of guessing an obfuscated field. No new DexKit
+    // delegate is added to HideContacts: an incomplete cache would otherwise delay all its hooks.
+    val profile = when (HostInfo.versionName to HostInfo.versionCode) {
+        "8.0.78" to 3180L -> "h" to "hr5.j"
+        "8.0.79" to 3182L -> "g" to "gt5.j"
+        "8.0.79" to 3200L -> "g" to "is5.j"
+        "8.0.80" to 3220L -> "h" to "as5.j"
+        else -> {
+            WeLogger.w(TAG, "share selector has no verified profile for this WeChat build")
+            return
+        }
+    }
+    // Resolve and validate the profile separately from hook installation, which must never be
+    // wrapped in try/catch. A missing or changed class affects only this optional surface.
+    val targets = runCatching {
+        val loader = HostInfo.application.classLoader
+        val listClass = Class.forName("com.tencent.mm.ui.mvvm.list.SelectContactMvvmList", false, loader)
+        check(listClass.superclass?.name == "com.tencent.mm.plugin.mvvmlist.MvvmList")
+        val preprocess = listClass.getDeclaredMethod(profile.first, List::class.java)
+        check(preprocess.returnType == List::class.java && Modifier.isPublic(preprocess.modifiers))
+        val row = Class.forName(profile.second, false, loader)
+        val username = row.getDeclaredField("f")
+        check(username.type == String::class.java && Modifier.isPublic(username.modifiers) &&
+            Modifier.isFinal(username.modifiers) && !Modifier.isStatic(username.modifiers))
+        preprocess.makeAccessible() to username.makeAccessible()
+    }.onFailure {
+        WeLogger.w(TAG, "share selector profile did not match this WeChat build", it)
+    }.getOrNull() ?: return
+    val (preprocess, usernameField) = targets
+    preprocess.hookBefore {
+        if (!shouldFilterShareTargets()) return@hookBefore
+        val hidden = hiddenContacts
+        if (hidden.isEmpty()) return@hookBefore
+        val entries = args[0] as? List<*> ?: return@hookBefore
+        val kept = entries.filterNot { entry ->
+            entry != null && usernameField.declaringClass.isInstance(entry) &&
+                (usernameField.get(entry) as? String) in hidden
+        }
+        if (kept.size == entries.size) return@hookBefore
+        args[0] = ArrayList(kept)
+        WeLogger.d(TAG, "filtered ${entries.size - kept.size} hidden contact(s) from share selector")
+    }
+    WeLogger.i(TAG, "share selector hook installed for ${HostInfo.versionName} (${HostInfo.versionCode})")
+    installRecentForwardHeaderHook()
+}
+
+private fun HideContacts.shouldFilterShareTargets(): Boolean =
+    !isTemporarilyShown && (surfaceOn(SURFACE_CONVERSATIONS) || surfaceOn(SURFACE_CONTACTS))
+
+/**
+ * The horizontal "recent forwards" strip uses a different source from the main selector list.
+ * In the checked builds, its view initializer synchronously reads n3.b/c/d and builds both of its
+ * own row lists from their String usernames. Intercept the returned copies only during that exact
+ * initializer; the same storage readers used elsewhere must retain their normal behavior. Both row
+ * lists and their click callbacks are then built from the same filtered input.
+ */
+private fun HideContacts.installRecentForwardHeaderHook() {
+    val targets = runCatching {
+        val loader = HostInfo.application.classLoader
+        val initializer = Class.forName("com.tencent.mm.ui.mvvm.uic.conversation.recent.o", false, loader)
+            .getDeclaredMethod("invoke")
+        check(initializer.parameterCount == 0 && initializer.returnType == Any::class.java)
+        val source = Class.forName("com.tencent.mm.ui.contact.n3", false, loader)
+        val readers = listOf("b", "c", "d").map { name ->
+            source.getDeclaredMethod(name).also { method ->
+                check(Modifier.isStatic(method.modifiers) && method.returnType == List::class.java)
+            }.makeAccessible()
+        }
+        initializer.makeAccessible() to readers
+    }.onFailure {
+        WeLogger.w(TAG, "recent-forward header profile did not match this WeChat build", it)
+    }.getOrNull() ?: return
+
+    val (initializer, readers) = targets
+    val initializing = ThreadLocal<Int>()
+    initializer.hookBefore { initializing.set((initializing.get() ?: 0) + 1) }
+    initializer.hookAfter {
+        val depth = initializing.get() ?: 0
+        if (depth <= 1) initializing.remove() else initializing.set(depth - 1)
+    }
+    readers.forEach { reader ->
+        reader.hookAfter {
+            if ((initializing.get() ?: 0) == 0 || !shouldFilterShareTargets()) return@hookAfter
+            val hidden = hiddenContacts
+            if (hidden.isEmpty()) return@hookAfter
+            val entries = result as? List<*> ?: return@hookAfter
+            val kept = entries.filterNot { it is String && it in hidden }
+            if (kept.size == entries.size) return@hookAfter
+            result = ArrayList(kept)
+            WeLogger.d(TAG, "filtered ${entries.size - kept.size} hidden contact(s) from recent-forward header")
+        }
+    }
+    WeLogger.i(TAG, "recent-forward header hooks installed for ${HostInfo.versionName} (${HostInfo.versionCode})")
 }
 
 // ---------------------------------------------------------------------------------------------

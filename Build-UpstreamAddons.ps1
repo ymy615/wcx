@@ -5,6 +5,7 @@ param(
     [switch]$BuildOnly,
     [switch]$SkipBuild,
     [ValidateSet('Release', 'Debug')][string]$BuildType = 'Release',
+    [string]$ExpectedBranch = 'codex/v336-secret-addons',
     [string]$ForkUrl = 'https://github.com/ymy615/wcx.git',
     [string]$ForkBranch = 'master',
     [string]$ToolRoot = 'D:\projects\VX\local-analysis\tools',
@@ -14,7 +15,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 $repo = $PSScriptRoot
-$requiredBranch = 'codex/v336-secret-addons'
+$requiredBranch = $ExpectedBranch
 $remoteRef = "refs/remotes/ymy615/$ForkBranch"
 $variant = "standard$BuildType"
 $buildSlug = $BuildType.ToLowerInvariant()

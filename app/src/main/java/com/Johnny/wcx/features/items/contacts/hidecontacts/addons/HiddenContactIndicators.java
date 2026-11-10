@@ -45,10 +45,15 @@ public final class HiddenContactIndicators {
     private static final Map<String, Long> openedAt = new HashMap<String, Long>();
     private static final Map<String, Long> receivedAt = new HashMap<String, Long>();
     private static final WeakHashMap<TextView, OriginalPaint> paints = new WeakHashMap<TextView, OriginalPaint>();
+    // Embedded panes can be resumed together, or leave the visible home pane paused.
+    // One Activity's callback must not suspend indicators owned by another visible pane.
+    private static final Set<Activity> resumedActivities =
+            Collections.newSetFromMap(new WeakHashMap<Activity, Boolean>());
     private static WeakReference<Activity> home = new WeakReference<Activity>(null);
     private static Application application;
     private static boolean loaded;
-    private static boolean resumed;
+    private static boolean ticking;
+    private static boolean homeStopped;
     private static String currentChat;
     private static long queriedAt;
     private static FrameLayout dotRoot;
@@ -74,15 +79,20 @@ public final class HiddenContactIndicators {
     }
     private static final Runnable TICK = new Runnable() {
         public void run() {
-            if (!resumed) return;
+            if (!ticking) return;
             try { render(); } catch (RuntimeException e) { Log.w(TAG, "indicator refresh failed", e); }
             MAIN.removeCallbacks(this);
-            if (resumed) MAIN.postDelayed(this, 1000);
+            if (ticking) MAIN.postDelayed(this, 1000);
         }
     };
     private static void refresh() {
         MAIN.removeCallbacks(TICK);
-        if (resumed) MAIN.post(TICK);
+        if (ticking) MAIN.post(TICK);
+    }
+    private static void updateTracking() {
+        ticking = home.get() != null && !homeStopped && !resumedActivities.isEmpty();
+        refresh();
+        if (!ticking) clearVisuals();
     }
     public static void stateChanged() {
         if (Looper.myLooper() != Looper.getMainLooper()) {
@@ -93,35 +103,37 @@ public final class HiddenContactIndicators {
     }
     private static final Application.ActivityLifecycleCallbacks CALLBACKS = new Application.ActivityLifecycleCallbacks() {
         public void onActivityResumed(Activity a) {
+            resumedActivities.add(a);
             if (isHome(a)) { currentChat = null; watch(a); }
             else {
-                resumed = false;
-                MAIN.removeCallbacks(TICK);
-                clearVisuals();
                 currentChat = null;
                 if (isChat(a)) acknowledge(a);
+                updateTracking();
             }
         }
         public void onActivityPaused(Activity a) {
-            if (home.get() == a) {
-                resumed = false;
-                MAIN.removeCallbacks(TICK);
-                clearVisuals();
-            }
+            resumedActivities.remove(a);
             if (isChat(a)) currentChat = null;
+            updateTracking();
         }
         public void onActivityDestroyed(Activity a) {
+            resumedActivities.remove(a);
             if (home.get() == a) {
-                resumed = false;
                 home.clear();
-                MAIN.removeCallbacks(TICK);
                 clearVisuals();
                 detachDot();
             }
+            updateTracking();
         }
         public void onActivityCreated(Activity a, Bundle b) {}
-        public void onActivityStarted(Activity a) {}
-        public void onActivityStopped(Activity a) {}
+        public void onActivityStarted(Activity a) {
+            if (home.get() == a) { homeStopped = false; updateTracking(); }
+        }
+        public void onActivityStopped(Activity a) {
+            resumedActivities.remove(a);
+            if (home.get() == a) homeStopped = true;
+            updateTracking();
+        }
         public void onActivitySaveInstanceState(Activity a, Bundle b) {}
     };
     public static void bootstrap() {
@@ -138,7 +150,7 @@ public final class HiddenContactIndicators {
         if (application != null) return;
         app.registerActivityLifecycleCallbacks(CALLBACKS);
         application = app;
-        Log.i(TAG, "v6 unread lifecycle registered; reconcile confirmed native read state");
+        Log.i(TAG, "v7 unread lifecycle registered; track visible embedded home panes");
     }
     public static void watch(final Activity a) {
         if (!isHome(a)) return;
@@ -148,8 +160,11 @@ public final class HiddenContactIndicators {
         }
         register(a.getApplication());
         if (home.get() != a) { clearVisuals(); detachDot(); home = new WeakReference<Activity>(a); }
-        resumed = true;
-        refresh();
+        homeStopped = false;
+        // Feature enable/title recovery can attach after the original onResume callback.
+        // Only seed a focused home here; lifecycle callbacks track unfocused resumed panes.
+        if (a.getWindow() != null && a.getWindow().getDecorView().hasWindowFocus()) resumedActivities.add(a);
+        updateTracking();
     }
     public static void received(final String talker) {
         if (talker == null) return;
@@ -294,8 +309,30 @@ public final class HiddenContactIndicators {
         dotColor = 0;
     }
     private static boolean visible(View v, Rect bounds) {
-        return v.getVisibility() == View.VISIBLE && v.isShown() && v.getGlobalVisibleRect(bounds)
-                && bounds.width() > 0 && bounds.height() > 0;
+        if (!v.isAttachedToWindow() || v.getWindowVisibility() != View.VISIBLE || !v.isShown()
+                || !v.getLocalVisibleRect(bounds) || bounds.isEmpty()) return false;
+        // Use screen coordinates for both pane comparison and dot placement. Root-relative
+        // visible rectangles cannot be mixed with getLocationOnScreen in offset windows.
+        int[] location = new int[2];
+        v.getLocationOnScreen(location);
+        bounds.offset(location[0], location[1]);
+        return true;
+    }
+    private static boolean homePaneVisible(Activity a, View decor, Rect bounds) {
+        if (!visible(decor, bounds)) return false;
+        if (decor.hasWindowFocus()) return true;
+        for (Activity foreground : resumedActivities) {
+            if (foreground == a || foreground.isFinishing() || foreground.isDestroyed()
+                    || foreground.getTaskId() != a.getTaskId() || foreground.getWindow() == null) continue;
+            View other = foreground.getWindow().getDecorView();
+            if (!other.hasWindowFocus() || decor.getDisplay() == null || other.getDisplay() == null
+                    || decor.getDisplay().getDisplayId() != other.getDisplay().getDisplayId()) continue;
+            Rect otherBounds = new Rect();
+            // Xiaomi parallel windows can report isInMultiWindowMode=false. Compare actual
+            // pane bounds instead: a fullscreen chat covering home must still suppress it.
+            if (visible(other, otherBounds) && !Rect.intersects(bounds, otherBounds)) return true;
+        }
+        return false;
     }
     private static final class Targets {
         final ArrayList<TextView> labels = new ArrayList<TextView>();
@@ -359,9 +396,10 @@ public final class HiddenContactIndicators {
     }
     private static void render() {
         Activity a = home.get();
-        if (a == null || a.isFinishing() || a.getWindow() == null) return;
+        if (a == null || a.isFinishing() || a.isDestroyed() || a.getWindow() == null) return;
         View decor = a.getWindow().getDecorView();
-        if (!decor.hasWindowFocus() || !decor.isShown()) { clearVisuals(); return; }
+        Rect bounds = new Rect();
+        if (!homePaneVisible(a, decor, bounds)) { clearVisuals(); return; }
         load();
         if (!HiddenContactAddonState.INSTANCE.isAvailable()) { clearVisuals(); return; }
         boolean boldEnabled = BottomBarBold.INSTANCE.isActive();
@@ -376,9 +414,8 @@ public final class HiddenContactIndicators {
         if ((boldEnabled || dotEnabled) && !secrets.isEmpty()) queryUnread(secrets);
         boolean hidden = !HiddenContactAddonState.INSTANCE.isTemporarilyShown();
         boolean active = hidden && !Collections.disjoint(pending, secrets);
-        Rect bounds = new Rect();
         Targets targets = new Targets();
-        if (visible(decor, bounds)) collect(decor, bounds, targets, 0);
+        collect(decor, bounds, targets, 0);
         boolean bold = active && boldEnabled;
         Iterator<Map.Entry<TextView, OriginalPaint>> previous = paints.entrySet().iterator();
         while (previous.hasNext()) {
@@ -403,7 +440,9 @@ public final class HiddenContactIndicators {
         String status = "pending=" + pending.size() + "; hidden=" + hidden + "; boldEnabled=" + boldEnabled
                 + "; dotEnabled=" + dotEnabled + "; shownDotEnabled=" + shownDotEnabled + "; bottomLabels=" + targets.labels.size()
                 + "; search=" + (targets.search != null) + "; bold=" + (bold && !targets.labels.isEmpty()) + "; dot=" + dotted
-                + "; dotColor=" + (dotted ? (shownDot ? "green" : "red") : "none");
+                + "; dotColor=" + (dotted ? (shownDot ? "green" : "red") : "none")
+                + "; homeFocused=" + decor.hasWindowFocus() + "; resumedActivities=" + resumedActivities.size()
+                + "; homeBounds=" + bounds.toShortString();
         if (!status.equals(lastStatus)) { lastStatus = status; Log.i(TAG, status); }
     }
 }
